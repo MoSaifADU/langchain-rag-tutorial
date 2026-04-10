@@ -64,7 +64,8 @@ with st.sidebar:
                 chunks = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100).split_documents(documents)
                 
                 # Proxy Fix: check_embedding=False handles the 'proxies' error on some servers
-                embeddings = OpenAIEmbeddings(check_embedding=False)
+                embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
                 
                 if os.path.exists(CHROMA_PATH):
                     db_to_clear = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
@@ -95,7 +96,8 @@ if prompt := st.chat_input("Ask me about your files..."):
         st.markdown(prompt)
 
     # RAG Logic with Proxy Fix
-    embeddings = OpenAIEmbeddings(check_embedding=False)
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
     results = db.similarity_search_with_relevance_scores(prompt, k=8)
     
