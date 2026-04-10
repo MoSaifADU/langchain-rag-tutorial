@@ -5,6 +5,11 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
+
+from dotenv import load_dotenv
+load_dotenv()
+
+
 CHROMA_PATH = "chroma"
 
 PROMPT_TEMPLATE = """
@@ -41,7 +46,8 @@ def main():
     print(prompt)
 
     model = ChatOpenAI()
-    response_text = model.predict(prompt)
+    response_text = model.invoke(prompt).content
+
 
     sources = [doc.metadata.get("source", None) for doc, _score in results]
     formatted_response = f"Response: {response_text}\nSources: {sources}"
