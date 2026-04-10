@@ -8,6 +8,9 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
+if "OPENAI_API_KEY" in st.secrets:
+    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+    
 # Setup
 load_dotenv()
 CHROMA_PATH = "chroma"
