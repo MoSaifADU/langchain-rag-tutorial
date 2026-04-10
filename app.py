@@ -1,28 +1,21 @@
 import streamlit as st
 import os
 import shutil
+import openai
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-import openai
 
-# --- CONFIGURATION & SECRETS ---
+# --- 1. SECRETS & ENVIRONMENT SETUP ---
 load_dotenv()
-# This line is CRITICAL for deployment: It connects Streamlit Secrets to the Environment
 
-# AGGRESSIVE KEY LOADING
+# Link Streamlit Secrets to Environment Variables for the Cloud
 if "OPENAI_API_KEY" in st.secrets:
-    key = st.secrets["OPENAI_API_KEY"]
-    os.environ["OPENAI_API_KEY"] = key
-    openai.api_key = key
-elif os.environ.get("OPENAI_API_KEY"):
-    openai.api_key = os.environ.get("OPENAI_API_KEY")
-else:
-    st.error("Missing OpenAI API Key! Please add it to Streamlit Secrets.")
-    st.stop()
+    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 CHROMA_PATH = "chroma"
 DATA_PATH = "data/books"
@@ -43,33 +36,56 @@ Question: {question}
 
 st.set_page_config(page_title="Saif's RAG Bot", page_icon="🚀")
 
-# --- SIDEBAR ---
+# --- 2. SIDEBAR (Uploader & Processing) ---
 with st.sidebar:
     st.title("Settings & Upload")
     
     uploaded_files = st.file_uploader("Upload new documents", accept_multiple_files=True, type=['pdf', 'md'])
     if st.button("Process Documents"):
         if uploaded_files:
-            with st.spinner("Processing..."):
+            with st.spinner("Processing documents into database..."):
+                # Save uploaded files
                 for uploaded_file in uploaded_files:
                     with open(os.path.join(DATA_PATH, uploaded_file.name), "wb") as f:
                         f.write(uploaded_file.getbuffer())
                 
+                # Load documents with Error Handling
                 documents = []
                 for file in os.listdir(DATA_PATH):
+                    # Skip hidden system files (like .DS_Store)
+                    if file.startswith('.'):
+                        continue
+                        
                     path = os.path.join(DATA_PATH, file)
-                    if file.endswith(".pdf"): documents.extend(PyPDFLoader(path).load())
-                    elif file.endswith(".md"): documents.extend(TextLoader(path, encoding="utf-8").load())
+                    try:
+                        if file.endswith(".pdf"):
+                            loader = PyPDFLoader(path)
+                            documents.extend(loader.load())
+                        elif file.endswith(".md"):
+                            loader = TextLoader(path, encoding="utf-8")
+                            documents.extend(loader.load())
+                    except Exception as e:
+                        # This prevents the app from crashing if a PDF is corrupted
+                        st.warning(f"⚠️ Skipping {file}: File is corrupted or invalid format.")
+                        continue
                 
+                if not documents:
+                    st.error("No valid documents found to process.")
+                    st.stop()
+
+                # Split into chunks
                 chunks = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100).split_documents(documents)
                 
-                # Proxy Fix: check_embedding=False handles the 'proxies' error on some servers
+                # Setup Embeddings
                 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
                 
+                # Clear and Rebuild Database (Windows/Cloud safe)
                 if os.path.exists(CHROMA_PATH):
-                    db_to_clear = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-                    db_to_clear.delete_collection() 
+                    try:
+                        db_to_clear = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+                        db_to_clear.delete_collection() 
+                    except:
+                        pass
                 
                 Chroma.from_documents(chunks, embeddings, persist_directory=CHROMA_PATH)
                 st.success(f"Database Updated! {len(chunks)} chunks saved.")
@@ -80,43 +96,54 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- MAIN CHAT INTERFACE ---
+# --- 3. MAIN CHAT INTERFACE ---
 st.title("🤖 Saif's Knowledge Bot")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask me about your files..."):
+# User Input
+if prompt := st.chat_input("Ask about your documents..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # RAG Logic with Proxy Fix
+    # RAG Logic
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
     results = db.similarity_search_with_relevance_scores(prompt, k=8)
     
-    if len(results) == 0 or results[0][1] < 0.3:
-        response_text = "I couldn't find relevant info in the docs."
+    # SAFETY CHECK: If database is empty or no results found
+    if len(results) == 0:
+        response_text = "The database appears to be empty. Please use the sidebar to 'Process Documents'."
+    elif results[0][1] < 0.3:
+        response_text = "I couldn't find relevant info in the docs. Try re-phrasing your question."
     else:
+        # Prepare context and history
         context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
         sources = list(set([doc.metadata.get("source", "Unknown") for doc, _score in results]))
         history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-6:-1]])
         
+        # Build prompt and query AI
         final_prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE).format(
-            context=context_text, history=history_text, question=prompt
+            context=context_text, 
+            history=history_text, 
+            question=prompt
         )
         
         model = ChatOpenAI(model="gpt-4o-mini")
         response_text = model.invoke(final_prompt).content
+        
+        # Add source file names
         source_names = [os.path.basename(s) for s in sources]
         response_text += f"\n\n**Sources:** {', '.join(source_names)}"
 
+    # Display and Save response
     with st.chat_message("assistant"):
         st.markdown(response_text)
     st.session_state.messages.append({"role": "assistant", "content": response_text})
