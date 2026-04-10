@@ -7,12 +7,22 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
+import openai
 
 # --- CONFIGURATION & SECRETS ---
 load_dotenv()
 # This line is CRITICAL for deployment: It connects Streamlit Secrets to the Environment
+
+# AGGRESSIVE KEY LOADING
 if "OPENAI_API_KEY" in st.secrets:
-    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+    key = st.secrets["OPENAI_API_KEY"]
+    os.environ["OPENAI_API_KEY"] = key
+    openai.api_key = key
+elif os.environ.get("OPENAI_API_KEY"):
+    openai.api_key = os.environ.get("OPENAI_API_KEY")
+else:
+    st.error("Missing OpenAI API Key! Please add it to Streamlit Secrets.")
+    st.stop()
 
 CHROMA_PATH = "chroma"
 DATA_PATH = "data/books"
