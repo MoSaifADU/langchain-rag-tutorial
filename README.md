@@ -14,7 +14,11 @@ A Retrieval-Augmented Generation (RAG) application that allows you to upload doc
 
 **🛠️ Tech Stack**
 Language: Python 3.12+
+
 Orchestration: LangChain
+
 LLM & Embeddings: OpenAI (GPT-4o/GPT-3.5)
+
 Vector Database: Chroma
+
 Frontend: Streamlit 
